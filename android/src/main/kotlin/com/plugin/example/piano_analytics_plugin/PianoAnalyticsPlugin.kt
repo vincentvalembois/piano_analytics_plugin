@@ -1,5 +1,6 @@
 package com.plugin.example.piano_analytics_plugin
 
+import android.content.Context
 import androidx.annotation.NonNull
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -7,10 +8,13 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import io.piano.android.analytics.Configuration
 
-import io.piano.analytics.Event;
-import io.piano.analytics.PianoAnalytics;
-import io.piano.analytics.Configuration;
+import io.piano.android.analytics.PianoAnalytics
+import io.piano.android.analytics.model.Event
+import io.piano.android.analytics.model.Property
+import io.piano.android.analytics.model.PropertyName
+import io.piano.android.analytics.model.VisitorIDType
 
 object PAEvents {
   const val SET_CONFIGURATION = "setConfiguration"
@@ -19,17 +23,18 @@ object PAEvents {
 
 /** PianoAnalyticsPlugin */
 class PianoAnalyticsPlugin: FlutterPlugin, MethodCallHandler {
-  /// The MethodChannel that will the communication between Flutter and native Android
-  ///
-  /// This local reference serves to register the plugin with the Flutter Engine and unregister it
-  /// when the Flutter Engine is detached from the Activity
+
+  private val pa: PianoAnalytics
+    get() = PianoAnalytics.getInstance()
+
   private lateinit var channel : MethodChannel
-  private lateinit var pa: PianoAnalytics
+
+  private lateinit var context: Context
 
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+    context = flutterPluginBinding.applicationContext
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "piano_analytics_plugin")
     channel.setMethodCallHandler(this)
-    pa = PianoAnalytics.getInstance(flutterPluginBinding.applicationContext)
   }
 
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
@@ -42,25 +47,21 @@ class PianoAnalyticsPlugin: FlutterPlugin, MethodCallHandler {
           val collectDomain = arguments["collectDomain"] as? String
           val site = arguments["site"] as? Int
 
-          if (collectDomain?.isNullOrEmpty() ?: true || site == null) {
+          if (collectDomain?.isEmpty() != false || site == null) {
             result.error("500", "collectDomain is required", null)
           } else {
             val visitorID = arguments["visitorID"] as? String
-            if (visitorID?.isNullOrEmpty() ?: true ) {
-              pa.setConfiguration(
-                Configuration.Builder()
-                  .withCollectDomain(collectDomain)
-                  .withSite(site)
-                  .build()
-              )
-            } else {
-              pa.setConfiguration(
-                Configuration.Builder()
-                  .withCollectDomain(collectDomain)
-                  .withSite(site)
-                  .withVisitorID(visitorID!!)
-                  .build()
-              )
+
+            val configuration = Configuration.Builder(
+              collectDomain = collectDomain,
+              site = site,
+              visitorIDType = if (visitorID?.isEmpty() == false) { VisitorIDType.CUSTOM } else { VisitorIDType.UUID }
+            )
+
+            PianoAnalytics.init(context, configuration.build())
+
+            if (visitorID?.isEmpty() == false) {
+              pa.customVisitorId = visitorID
             }
           }
         }
@@ -72,7 +73,8 @@ class PianoAnalyticsPlugin: FlutterPlugin, MethodCallHandler {
             result.error("500", "eventName is required", null)
           } else {
             val data: HashMap<String, Any?> = arguments["data"] as HashMap<String, Any?>
-            pa.sendEvent(Event(eventName!!, data))
+            val event = Event.Builder(eventName ?: "").properties(data.toProperties())
+            pa.sendEvents(event.build())
           }
         }
 
@@ -86,4 +88,8 @@ class PianoAnalyticsPlugin: FlutterPlugin, MethodCallHandler {
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
     channel.setMethodCallHandler(null)
   }
+}
+
+fun HashMap<String, Any?>.toProperties(): Collection<Property> = map { (key, value) ->
+  Property(PropertyName(key), value.toString())
 }
